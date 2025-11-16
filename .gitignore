@@ -1,0 +1,48 @@
+# IDA SDK (user must provide their own)
+sdk/
+
+# Build artifacts
+release/
+*.so
+*.dll
+*.dylib
+*.o
+*.obj
+
+# Build logs
+build.log
+*.log
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+*~
+.directory
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Docker
+.dockerignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.cache
+
+# Git
+.git/
