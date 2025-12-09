@@ -38,29 +38,30 @@ Automatically discover, navigate, and annotate virtual function tables in compil
 
 **Core Functionality**
 
-- Symbol-based vtable detection (Linux/GCC + Windows/MSVC)
-- Automatic class name extraction from mangled symbols
-- Virtual function index annotation (0-based indexing)
-- Searchable vtable list with 2000+ entries
-- Smart offset detection (RTTI-aware)
-- **Function browser** - Browse and jump to any virtual function
-- **Pure virtual detection** - Identifies abstract classes automatically
-- **Batch annotation** - Annotate all vtables at once
+-  Symbol-based vtable detection (Linux/GCC + Windows/MSVC)
+-  Automatic class name extraction from mangled symbols
+-  Virtual function index annotation (0-based indexing)
+-  Searchable vtable list with 2000+ entries
+-  Smart offset detection (RTTI-aware)
+-  **Function browser** - Browse and jump to any virtual function
+-  **Pure virtual detection** - Identifies abstract classes automatically
+-  **Batch annotation** - Annotate all vtables at once
 
 **Platform Support**
 
-- ► IDA Pro 9.x (modern SDK)
-- ► macOS ARM64 (Apple Silicon)
-- ► macOS x64 (Intel)
-- ► Linux x64
-- ► Windows x64
+-  ► IDA Pro 9.x (modern SDK)
+-  ► macOS ARM64 (Apple Silicon)
+-  ► macOS x64 (Intel)
+-  ► Linux x64
+-  ► Linux ARM64
+-  ► Windows x64
 
 **Integration**
 
-- Native IDA chooser interface
-- Context menu integration (right-click → VTable Explorer)
-- Platform-specific hotkeys (⌘⇧V / Ctrl+Shift+V)
-- One-click annotation and navigation
+-  Native IDA chooser interface
+-  Context menu integration (right-click → VTable Explorer)
+-  Platform-specific hotkeys (⌘⇧V / Ctrl+Shift+V)
+-  One-click annotation and navigation
 
 ---
 
@@ -90,16 +91,16 @@ auto func = (FunctionType)vtable[7];  // vtable index #7
 
 **Reverse Engineering Games**
 
-- Quickly locate player/entity vtables by class name
-- Identify virtual function hierarchies
-- Map out class inheritance structures
-- Hook specific virtual methods for modding/analysis
+-  Quickly locate player/entity vtables by class name
+-  Identify virtual function hierarchies
+-  Map out class inheritance structures
+-  Hook specific virtual methods for modding/analysis
 
 **Code Analysis**
 
-- Understand polymorphic behavior
-- Track virtual function implementations across inheritance
-- Identify unused or pure virtual functions
+-  Understand polymorphic behavior
+-  Track virtual function implementations across inheritance
+-  Identify unused or pure virtual functions
 
 ---
 
@@ -138,9 +139,11 @@ _ZTV6Player → vtable for Player
 
 **2. Copy** to IDA plugins folder:
 
-- ▪ Windows: `vtable64-windows-x64.dll` → `C:\Program Files\IDA Pro X.X\plugins\`
-- ▪ Linux: `vtable64-linux-x64.so` → `/path/to/ida/plugins/`
-- ▪ macOS: `vtable64-macos-*.dylib` → `/Applications/IDA Pro X.X.app/Contents/MacOS/plugins/`
+-  ▪ Windows x64: `vtable64-windows-x64.dll` → `C:\Program Files\IDA Pro X.X\plugins\`
+-  ▪ Linux x64: `vtable64-linux-x64.so` → `/path/to/ida/plugins/`
+-  ▪ Linux ARM64: `vtable64-linux-arm64.so` → `/path/to/ida/plugins/`
+-  ▪ macOS ARM64: `vtable64-macos-arm64.dylib` → `/Applications/IDA Pro X.X.app/Contents/MacOS/plugins/`
+-  ▪ macOS x64: `vtable64-macos-x64.dylib` → `/Applications/IDA Pro X.X.app/Contents/MacOS/plugins/`
 
 **3. Restart** IDA Pro
 
@@ -174,20 +177,63 @@ _ZTV6Player → vtable for Player
 
 ### Prerequisites
 
-- **Docker** - Installed and running
-- **IDA SDK** - Extract to `sdk/` in project root
+**All platforms:**
 
-### Build All Platforms
+-  **IDA SDK** - Extract to `sdk/` in project root
+
+**Linux/macOS builds:**
+
+-  **Docker** - Installed and running
+
+**Windows cross-compile (from macOS/Linux):**
+
+-  **LLVM/Clang** - `brew install llvm` (macOS) or `apt install clang lld` (Linux)
+-  **xwin** - `cargo install xwin && xwin --accept-license splat --output ~/.xwin`
+
+### Build Commands
+
+The Makefile automatically detects your platform and uses the appropriate build method:
+
+**Build Linux + macOS (Docker):**
 
 ```bash
 make build
 ```
 
-Builds **all 4 platforms** (Linux x64, Windows x64, macOS ARM64, macOS Intel x64) in a single Docker multi-stage container.
+**Build Windows:**
 
-**Output:** `release/vtable64-{platform}-{arch}.{ext}`
+```bash
+make build-windows
+```
 
-See [docker/README.md](docker/README.md) for implementation details.
+-  **From macOS/Linux**: Cross-compiles using Clang-cl + xwin
+-  **From Windows**: Native build (manual MSVC setup required)
+
+**Build ALL platforms:**
+
+```bash
+make build-all
+```
+
+### Build Output
+
+After `make build-all`:
+
+-  `release/vtable64-linux-x64.so` - Linux x86_64
+-  `release/vtable64-linux-arm64.so` - Linux ARM64
+-  `release/vtable64-macos-arm64.dylib` - macOS Apple Silicon
+-  `release/vtable64-macos-x64.dylib` - macOS Intel
+-  `release/vtable64-windows-x64.dll` - Windows x64
+
+**Total: 5 platforms!** 🚀
+
+### Platform-Specific Notes
+
+**macOS**: Windows cross-compile requires `brew install llvm` + xwin setup
+**Linux**: Windows cross-compile requires `apt install clang lld` + xwin setup
+**Windows**: Native Windows build requires manual MSVC or Clang-cl setup
+
+See [docker/README.md](docker/README.md) for Docker build details.
 
 ---
 
@@ -195,36 +241,36 @@ See [docker/README.md](docker/README.md) for implementation details.
 
 **Symbol Detection Patterns:**
 
-- `_ZTV*` - Linux/GCC vtable symbols
-- `??_7*@@6B@` - Windows/MSVC vftable symbols
-- `*vftable*`, `*vtbl*` - Generic fallback patterns
+-  `_ZTV*` - Linux/GCC vtable symbols
+-  `??_7*@@6B@` - Windows/MSVC vftable symbols
+-  `*vftable*`, `*vtbl*` - Generic fallback patterns
 
 **Class Name Extraction:**
 
-- IDA demangler integration
-- Fallback: Itanium C++ name mangling parser
-- Handles nested namespaces and templates
+-  IDA demangler integration
+-  Fallback: Itanium C++ name mangling parser
+-  Handles nested namespaces and templates
 
 **Offset Detection:**
 
-- Linux/GCC: Auto-detects RTTI offset (typically +2 qwords)
-- Windows/MSVC: Starts at vtable base (offset 0)
-- Smart boundary detection (stops at next vtable or invalid pointers)
+-  Linux/GCC: Auto-detects RTTI offset (typically +2 qwords)
+-  Windows/MSVC: Starts at vtable base (offset 0)
+-  Smart boundary detection (stops at next vtable or invalid pointers)
 
 **Annotation Strategy:**
 
-- 0-based indexing (matches C++ standard)
-- Includes both index and byte offset in comments (`index: X | offset: Y`)
-- Skips typeinfo/RTTI pointers
-- Tolerates up to 5 consecutive invalid entries for better vtable scanning
-- Enhanced function detection (trusts IDA auto-generated function names)
+-  0-based indexing (matches C++ standard)
+-  Includes both index and byte offset in comments (`index: X | offset: Y`)
+-  Skips typeinfo/RTTI pointers
+-  Tolerates up to 5 consecutive invalid entries for better vtable scanning
+-  Enhanced function detection (trusts IDA auto-generated function names)
 
 **Pure Virtual Detection:**
 
-- Detects `__cxa_pure_virtual` (Linux/GCC)
-- Detects `_purecall` and `purevirt` (Windows/MSVC)
-- Abstract classes marked with `[abstract]` in chooser
-- Function count shows pure virtual breakdown: `26 (3 pv)`
+-  Detects `__cxa_pure_virtual` (Linux/GCC)
+-  Detects `_purecall` and `purevirt` (Windows/MSVC)
+-  Abstract classes marked with `[abstract]` in chooser
+-  Function count shows pure virtual breakdown: `26 (3 pv)`
 
 ---
 
