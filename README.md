@@ -1,8 +1,103 @@
-# VTable Explorer
+# VTable Explorer for IDA Pro
 
-C++ virtual table detection and annotation tool for **IDA Pro 9.x** with support for **Windows**, **Linux**, and **macOS** (Intel + Apple Silicon).
+Professional C++ virtual table analysis plugin for IDA Pro 9.x with complete cross-platform support.
 
-Automatically discover, navigate, and annotate virtual function tables in compiled C++ binaries.
+Automatic vtable detection, inheritance analysis, and function override tracking for reverse engineering compiled C++ binaries.
+
+---
+
+## Features
+
+**Core Capabilities**
+
+- Automatic vtable detection (GCC/MSVC symbol patterns)
+- Class name extraction and demangling
+- Virtual function indexing with byte offsets
+- Inheritance hierarchy detection via RTTI parsing
+- Function override comparison between base and derived classes
+- Pure virtual and abstract class identification
+- Interactive inheritance graph visualization
+- Batch annotation with progress tracking
+
+**Platform Support**
+
+- IDA Pro 9.x (modern SDK)
+- Windows x64
+- Linux x64/ARM64
+- macOS Intel/Apple Silicon
+
+**Integration**
+
+- Native IDA chooser interface
+- Context menu integration
+- Keyboard shortcuts (Ctrl+Shift+V / Cmd+Shift+V)
+- Searchable vtable browser with 2000+ entry support
+
+---
+
+## Installation
+
+**Download** binary for your platform from releases
+
+**Copy** to IDA plugins directory:
+
+```
+Windows:  C:\Program Files\IDA Pro 9.x\plugins\vtable64-windows-x64.dll
+Linux:    /opt/ida-pro/plugins/vtable64-linux-{x64,arm64}.so
+macOS:    /Applications/IDA Pro 9.x.app/Contents/MacOS/plugins/vtable64-macos-{arm64,x64}.dylib
+```
+
+**Restart** IDA Pro
+
+---
+
+## Quick Start
+
+**Open Plugin**
+- Keyboard: `Ctrl+Shift+V` (Win/Linux) or `Cmd+Shift+V` (macOS)
+- Menu: `Edit → Plugins → VTableExplorer`
+- Context menu: Right-click in disassembly
+
+**Basic Workflow**
+
+1. Open plugin to see all detected vtables
+2. Search by typing class name
+3. Press `Enter` to annotate and jump to vtable
+4. Press `Del` to browse virtual functions
+5. Press `Edit` to compare with base class (shows overrides only)
+6. Press `Ins` to batch annotate all vtables
+
+**Inheritance Analysis**
+
+- Right-click vtable → "Show Inheritance Tree" for visual class hierarchy
+- Override comparison highlights changes: inherited (gray), overridden (green), new (blue)
+- Toggle "Show All" / "Hide Inherited" to filter results
+
+---
+
+## Use Cases
+
+**Runtime Hooking**
+
+```cpp
+// VTable Explorer shows: index: 42 | offset: 336
+void** vtable = *(void***)pObject;
+auto OnTakeDamage = (TakeDamageFn)vtable[42];  // exact index from annotation
+```
+
+**Reverse Engineering**
+
+- Locate player/entity vtables by class name search
+- Map virtual function hierarchies across inheritance
+- Identify which methods derived classes override
+- Track pure virtual functions and abstract classes
+
+**Code Analysis**
+
+- Understand polymorphic behavior patterns
+- Visualize inheritance relationships
+- Compare vtable implementations across class families
+- Document virtual function indices for hooking frameworks
 
 ---
 
@@ -11,13 +106,13 @@ Automatically discover, navigate, and annotate virtual function tables in compil
 <p align="center">
   <img src="docs/images/vtable-chooser.jpg" alt="VTable Chooser" width="700"/>
   <br/>
-  <em>Searchable vtable list with function counts, abstract class detection, and pure virtual indicators</em>
+  <em>Searchable vtable browser with inheritance and pure virtual detection</em>
 </p>
 
 <p align="center">
   <img src="docs/images/function-browser.jpg" alt="Function Browser" width="700"/>
   <br/>
-  <em>Browse all virtual functions in a vtable with pure virtual highlighting</em>
+  <em>Virtual function browser with index and override status</em>
 </p>
 
 <p align="center">
@@ -27,258 +122,140 @@ Automatically discover, navigate, and annotate virtual function tables in compil
 </p>
 
 <p align="center">
-  <img src="docs/images/context-menu.jpg" alt="Context Menu" width="300"/>
+  <img src="docs/images/inheritance-graph.jpg" alt="Inheritance Graph" width="700"/>
   <br/>
-  <em>Right-click context menu with Annotate All, Browse Functions, and Refresh</em>
+  <em>Interactive class hierarchy visualization with override statistics</em>
 </p>
 
----
+<p align="center">
+  <img src="docs/images/chooser-context-menu.jpg" alt="Context Menu" width="700"/>
+  <br/>
+  <em>VTable Explorer context menu with Show Inheritance Tree and Compare with Base</em>
+</p>
 
-## Features
-
-**Core Functionality**
-
--  Symbol-based vtable detection (Linux/GCC + Windows/MSVC)
--  Automatic class name extraction from mangled symbols
--  Virtual function index annotation (0-based indexing)
--  Searchable vtable list with 2000+ entries
--  Smart offset detection (RTTI-aware)
--  **Function browser** - Browse and jump to any virtual function
--  **Pure virtual detection** - Identifies abstract classes automatically
--  **Batch annotation** - Annotate all vtables at once
-
-**Platform Support**
-
--  ► IDA Pro 9.x (modern SDK)
--  ► macOS ARM64 (Apple Silicon)
--  ► macOS x64 (Intel)
--  ► Linux x64
--  ► Linux ARM64
--  ► Windows x64
-
-**Integration**
-
--  Native IDA chooser interface
--  Context menu integration (right-click → VTable Explorer)
--  Platform-specific hotkeys (⌘⇧V / Ctrl+Shift+V)
--  One-click annotation and navigation
-
----
-
-## Why VTable Explorer?
-
-**Problem**: When reverse engineering C++ applications (especially games), you often need to hook or call virtual functions at runtime using their vtable index. Manually counting offsets in vtables is error-prone and time-consuming.
-
-**Solution**: VTable Explorer automatically:
-
-1. **Finds all vtables** - Scans for `_ZTV` (Linux/GCC) and `??_7` (Windows/MSVC) symbols
-2. **Extracts class names** - Demangles symbols to show readable class names
-3. **Annotates indices** - Labels each virtual function with its exact index (0-based)
-4. **Enables quick navigation** - Jump between vtables and their virtual functions instantly
-
-### Use Cases
-
-**Runtime Hooking**
-
-```cpp
-// Without VTable Explorer: Manual counting, error-prone
-void** vtable = *(void***)pObject;
-auto func = (FunctionType)vtable[???];  // Which index?
-
-// With VTable Explorer: Known index from annotations
-auto func = (FunctionType)vtable[7];  // vtable index #7
-```
-
-**Reverse Engineering Games**
-
--  Quickly locate player/entity vtables by class name
--  Identify virtual function hierarchies
--  Map out class inheritance structures
--  Hook specific virtual methods for modding/analysis
-
-**Code Analysis**
-
--  Understand polymorphic behavior
--  Track virtual function implementations across inheritance
--  Identify unused or pure virtual functions
+<p align="center">
+  <img src="docs/images/ida-context-menu.jpg" alt="IDA Context Menu" width="700"/>
+  <br/>
+  <em>IDA disassembly view with VTable Explorer integration</em>
+</p>
 
 ---
 
 ## How It Works
 
-VTable Explorer uses **symbol-based detection** to find vtables:
+**Symbol Detection**
 
-**Linux/GCC Format:**
-
-```
-_ZTV6CCSBot → vtable for CCSBot
-_ZTV6Player → vtable for Player
-```
-
-**Windows/MSVC Format:**
+VTable Explorer scans for platform-specific vtable symbols:
 
 ```
-??_7CCSBot@@6B@ → const CCSBot::`vftable'
+Linux/GCC:     _ZTV6Player  → vtable for 'Player'
+Windows/MSVC:  ??_7Player@@6B@  → Player::`vftable'
 ```
 
-**Annotation Example:**
+**RTTI Parsing**
 
-```
+Automatic Runtime Type Information parsing extracts:
+- Base class relationships
+- Multiple inheritance detection
+- Virtual inheritance identification
+- Class hierarchy structure
+
+**Annotation Example**
+
+```asm
 .data:1CDB018 _ZTV6CCSBot:              ; vtable for 'CCSBot'
-.data:1CDB020   dq offset _ZTI6CCSBot  ; typeinfo (RTTI)
+.data:1CDB020   dq offset _ZTI6CCSBot  ; typeinfo (RTTI metadata)
 .data:1CDB028   dq offset sub_A23D00   ; index: 0 | offset: 0
 .data:1CDB030   dq offset sub_A237B0   ; index: 1 | offset: 8
 .data:1CDB038   dq offset sub_A283C0   ; index: 2 | offset: 16
 ```
 
----
+**Smart Offset Detection**
 
-## Installation
-
-**1. Download** the latest release for your platform
-
-**2. Copy** to IDA plugins folder:
-
--  ▪ Windows x64: `vtable64-windows-x64.dll` → `C:\Program Files\IDA Pro X.X\plugins\`
--  ▪ Linux x64: `vtable64-linux-x64.so` → `/path/to/ida/plugins/`
--  ▪ Linux ARM64: `vtable64-linux-arm64.so` → `/path/to/ida/plugins/`
--  ▪ macOS ARM64: `vtable64-macos-arm64.dylib` → `/Applications/IDA Pro X.X.app/Contents/MacOS/plugins/`
--  ▪ macOS x64: `vtable64-macos-x64.dylib` → `/Applications/IDA Pro X.X.app/Contents/MacOS/plugins/`
-
-**3. Restart** IDA Pro
-
-### Usage
-
-| Method       | Shortcut                                       |
-| ------------ | ---------------------------------------------- |
-| Menu         | `Edit > Plugins > VTableExplorer`              |
-| Hotkey       | `Ctrl+Shift+V` (Win/Linux) / `⌘⇧V` (macOS)     |
-| Context Menu | Right-click in disassembly → `VTable Explorer` |
-
-**Chooser Hotkeys:**
-
-| Key     | Action                                              |
-| ------- | --------------------------------------------------- |
-| `Enter` | Annotate selected vtable and jump to it             |
-| `Del`   | Open function browser for selected vtable           |
-| `Ins`   | Annotate ALL vtables at once (with progress dialog) |
-
-**Workflow:**
-
-1. Open plugin (hotkey or menu)
-2. Browse searchable list of vtables (by class name)
-3. Select a vtable and press `Enter` to annotate, or `Del` to browse functions
-4. In function browser: `Enter` jumps directly to any virtual function
-5. Use `Ins` to batch-annotate all vtables at once
+- Linux/GCC: Auto-detects RTTI metadata offset (typically +2 qwords)
+- Windows/MSVC: Starts at vtable base (offset 0)
+- Boundary detection stops at next vtable or invalid pointers
+- Tolerates up to 5 consecutive invalid entries for robust scanning
 
 ---
 
 ## Building from Source
 
-### Prerequisites
+**Prerequisites**
 
-**All platforms:**
+- IDA SDK extracted to `sdk/` directory
+- Docker (for Linux/macOS builds)
+- LLVM/Clang (for Windows cross-compile)
 
--  **IDA SDK** - Extract to `sdk/` in project root
-
-**Linux/macOS builds:**
-
--  **Docker** - Installed and running
-
-**Windows cross-compile (from macOS/Linux):**
-
--  **LLVM/Clang** - `brew install llvm` (macOS) or `apt install clang lld` (Linux)
--  **xwin** - `cargo install xwin && xwin --accept-license splat --output ~/.xwin`
-
-### Build Commands
-
-The Makefile automatically detects your platform and uses the appropriate build method:
-
-**Build Linux + macOS (Docker):**
+**Build Commands**
 
 ```bash
+# Linux + macOS (via Docker)
 make build
-```
 
-**Build Windows:**
-
-```bash
+# Windows cross-compile (requires llvm + xwin)
 make build-windows
-```
 
--  **From macOS/Linux**: Cross-compiles using Clang-cl + xwin
--  **From Windows**: Native build (manual MSVC setup required)
-
-**Build ALL platforms:**
-
-```bash
+# All platforms
 make build-all
 ```
 
-### Build Output
+**Output**
 
-After `make build-all`:
+Binaries in `release/`:
+- `vtable64-linux-x64.so`
+- `vtable64-linux-arm64.so`
+- `vtable64-macos-arm64.dylib`
+- `vtable64-macos-x64.dylib`
+- `vtable64-windows-x64.dll`
 
--  `release/vtable64-linux-x64.so` - Linux x86_64
--  `release/vtable64-linux-arm64.so` - Linux ARM64
--  `release/vtable64-macos-arm64.dylib` - macOS Apple Silicon
--  `release/vtable64-macos-x64.dylib` - macOS Intel
--  `release/vtable64-windows-x64.dll` - Windows x64
-
-**Total: 5 platforms!** 🚀
-
-### Platform-Specific Notes
-
-**macOS**: Windows cross-compile requires `brew install llvm` + xwin setup
-**Linux**: Windows cross-compile requires `apt install clang lld` + xwin setup
-**Windows**: Native Windows build requires manual MSVC or Clang-cl setup
-
-See [docker/README.md](docker/README.md) for Docker build details.
+See [docker/README.md](docker/README.md) for build details.
 
 ---
 
 ## Technical Details
 
-**Symbol Detection Patterns:**
+**Detection Patterns**
 
--  `_ZTV*` - Linux/GCC vtable symbols
--  `??_7*@@6B@` - Windows/MSVC vftable symbols
--  `*vftable*`, `*vtbl*` - Generic fallback patterns
+- `_ZTV*` - Linux/GCC vtable symbols
+- `??_7*@@6B@` - Windows/MSVC vftable symbols
+- `*vftable*`, `*vtbl*` - Generic fallback patterns
 
-**Class Name Extraction:**
+**Class Name Extraction**
 
--  IDA demangler integration
--  Fallback: Itanium C++ name mangling parser
--  Handles nested namespaces and templates
+- IDA demangler integration
+- Itanium C++ ABI name parser fallback
+- Namespace and template support
 
-**Offset Detection:**
+**Pure Virtual Detection**
 
--  Linux/GCC: Auto-detects RTTI offset (typically +2 qwords)
--  Windows/MSVC: Starts at vtable base (offset 0)
--  Smart boundary detection (stops at next vtable or invalid pointers)
+- `__cxa_pure_virtual` (GCC)
+- `_purecall`, `purevirt` (MSVC)
+- Abstract classes marked in chooser
 
-**Annotation Strategy:**
+**Annotation Strategy**
 
--  0-based indexing (matches C++ standard)
--  Includes both index and byte offset in comments (`index: X | offset: Y`)
--  Skips typeinfo/RTTI pointers
--  Tolerates up to 5 consecutive invalid entries for better vtable scanning
--  Enhanced function detection (trusts IDA auto-generated function names)
+- 0-based indexing (C++ standard)
+- Index + byte offset comments
+- RTTI metadata skipping
+- Enhanced function detection (trusts IDA auto-analysis)
 
-**Pure Virtual Detection:**
+**Inheritance Analysis**
 
--  Detects `__cxa_pure_virtual` (Linux/GCC)
--  Detects `_purecall` and `purevirt` (Windows/MSVC)
--  Abstract classes marked with `[abstract]` in chooser
--  Function count shows pure virtual breakdown: `26 (3 pv)`
+- GCC: `__class_type_info` parsing
+- MSVC: `_RTTICompleteObjectLocator` parsing
+- Multi-level hierarchy traversal
+- Virtual inheritance detection
 
 ---
 
 ## Credits
 
-**Inspiration**: The concept originated from a Python vtable script by [KillStr3aK](https://github.com/KillStr3aK), which I used extensively for reverse engineering workflows. While the original script served its purpose well, I decided to create a full-featured IDA plugin with native UI support and cross-platform compatibility, particularly for macOS environments where plugin integration is preferred.
+**Original concept** by [KillStr3aK](https://github.com/KillStr3aK) - Python vtable script
 
-**Build System**: Adapted from my [IDA-Fusion-Enhanced fork](https://github.com/K4ryuu/IDA-Fusion-Enhanced)
+**Build system** adapted from [IDA-Fusion-Enhanced](https://github.com/K4ryuu/IDA-Fusion-Enhanced)
+
+---
 
 ## License
 

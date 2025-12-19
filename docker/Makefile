@@ -15,6 +15,7 @@ CPP_FILES      := $(wildcard ./src/*.cpp)
 ifeq ($(PLATFORM),Linux)
     # Linux - GCC (official)
     USE_COMPILER   := g++
+    COMPILER_FLAGS += -Wno-nontrivial-memcall -Wno-nullability-completeness -Wno-varargs
     COMPILER_FLAGS += -Isdk/src/include
     COMPILER_FLAGS += -fPIC
     COMPILER_FLAGS += -D__LINUX__ -D__EA64__
@@ -26,14 +27,18 @@ else ifeq ($(PLATFORM),Darwin)
     ARCH           ?= arm64
     ifeq ($(ARCH),x86_64)
         USE_COMPILER   := o64-clang++
+        COMPILER_FLAGS += -Wno-nullability-completeness -Wno-varargs
         COMPILER_FLAGS += -Isdk/src/include
         COMPILER_FLAGS += -D__MAC__ -D__EA64__
+        COMPILER_FLAGS += -mmacosx-version-min=12.0
         COMPILER_FLAGS += -Lsdk/src/lib/x64_mac_clang_64
         RELEASE_NAME   := vtable64-macos-x64.dylib
     else
         USE_COMPILER   := oa64-clang++
+        COMPILER_FLAGS += -Wno-nullability-completeness -Wno-varargs
         COMPILER_FLAGS += -Isdk/src/include
         COMPILER_FLAGS += -D__MAC__ -D__EA64__
+        COMPILER_FLAGS += -mmacosx-version-min=12.0
         COMPILER_FLAGS += -Lsdk/src/lib/arm64_mac_clang_64
         RELEASE_NAME   := vtable64-macos-arm64.dylib
     endif

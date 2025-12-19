@@ -97,6 +97,9 @@ else
 			-D__NT__ -D__EA64__ \
 			-Wno-microsoft-include \
 			-Wno-unused-command-line-argument \
+			-Wno-nontrivial-memcall \
+			-Wno-nullability-completeness \
+			-Wno-varargs \
 			"/Fo$$obj_name" \
 			-c "$$src" \
 			-imsvc "$(XWIN_DIR)/crt/include" \

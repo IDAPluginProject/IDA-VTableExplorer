@@ -11,6 +11,7 @@
 #include <string>
 #include <map>
 #include <algorithm>
+#include "vtable_utils.h"
 
 struct VTableInfo {
     ea_t address;
@@ -19,13 +20,20 @@ struct VTableInfo {
     bool is_windows;
     int func_count;
     int pure_virtual_count;
+    std::vector<std::string> base_classes;  // Base class names from RTTI
+    std::vector<std::string> derived_classes;  // Derived class names (computed)
+    int derived_count;  // Number of derived classes
+    bool has_multiple_inheritance;           // Multiple inheritance flag
+    bool has_virtual_inheritance;            // Virtual inheritance flag
 };
 
 namespace vtable_detector {
 
 inline bool is_valid_class_name(const std::string& name) {
+    using namespace vtable_utils;
+
     const size_t len = name.length();
-    if (len < 2 || len > 512) return false;
+    if (len < MIN_CLASS_NAME_LENGTH || len > MAX_CLASS_NAME_LENGTH) return false;
 
     const char first = name[0];
     if (!isupper(first) && first != '_') return false;
@@ -48,11 +56,13 @@ inline bool is_valid_class_name(const std::string& name) {
 
     return alnum_count > 0 &&
            !all_same &&
-           (float)alnum_count / len >= 0.6f &&
-           mangling_count <= 3;
+           (float)alnum_count / len >= MIN_ALNUM_RATIO &&
+           mangling_count <= MAX_MANGLING_MARKERS;
 }
 
 inline std::string extract_class_name(const char* mangled_name, bool& is_windows) {
+    using namespace vtable_utils;
+
     std::string sym_name(mangled_name);
     is_windows = false;
 
@@ -92,7 +102,7 @@ inline std::string extract_class_name(const char* mangled_name, bool& is_windows
 
             int len = atoi(p);
             while (isdigit(*p)) ++p;
-            if (len <= 0 || len >= 1024 || p + len > end) break;
+            if (len <= 0 || len >= (int)MAX_COMPONENT_LENGTH || p + len > end) break;
 
             last_component.assign(p, len);
             p += len;
@@ -102,7 +112,7 @@ inline std::string extract_class_name(const char* mangled_name, bool& is_windows
     else if (isdigit(*p)) {
         int len = atoi(p);
         while (isdigit(*p)) ++p;
-        if (len <= 0 || len >= 1024 || p + len > end) return "";
+        if (len <= 0 || len >= (int)MAX_COMPONENT_LENGTH || p + len > end) return "";
 
         std::string class_name(p, len);
         if (is_valid_class_name(class_name)) return class_name;
@@ -126,11 +136,13 @@ inline std::string extract_class_name(const char* mangled_name, bool& is_windows
 }
 
 inline std::vector<VTableInfo> find_vtables() {
+    using namespace vtable_utils;
+
     std::vector<VTableInfo> vtables;
     std::map<std::string, ea_t> seen;
 
     const size_t name_count = get_nlist_size();
-    vtables.reserve(name_count / 100);
+    vtables.reserve(name_count / VTABLE_RESERVE_RATIO);
 
     auto add_vtable = [&](ea_t ea, const std::string& class_name, bool is_win, const char* suffix) {
         std::string display = class_name + suffix;

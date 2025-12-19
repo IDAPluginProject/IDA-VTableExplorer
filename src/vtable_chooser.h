@@ -3,8 +3,13 @@
 #include <kernwin.hpp>
 #include <vector>
 #include <string>
+#include <map>
 #include "vtable_detector.h"
 #include "smart_annotator.h"
+#include "rtti_parser.h"
+#include "vtable_comparison.h"
+#include "inheritance_graph.h"
+#include "vtable_utils.h"
 
 struct vtable_cache_t {
     std::vector<VTableInfo> vtables;
@@ -23,7 +28,39 @@ struct vtable_cache_t {
             auto stats = smart_annotator::get_vtable_stats(vt.address, vt.is_windows, sorted_addrs);
             vt.func_count = stats.func_count;
             vt.pure_virtual_count = stats.pure_virtual_count;
+
+            // Parse RTTI to get inheritance information
+            const auto& inherit_info = rtti_parser::get_inheritance_info(vt.address, vt.is_windows);
+            vt.base_classes.clear();
+            for (const auto& base : inherit_info.base_classes) {
+                vt.base_classes.push_back(base.class_name);
+            }
+            vt.has_multiple_inheritance = inherit_info.has_multiple_inheritance;
+            vt.has_virtual_inheritance = inherit_info.has_virtual_inheritance;
+
+            vt.derived_classes.clear();
+            vt.derived_count = 0;
         }
+
+        // Second pass: Compute derived classes (optimized O(n) algorithm)
+        // Build reverse lookup: base_class -> list of classes that inherit from it
+        std::map<std::string, std::vector<std::string>> base_to_derived;
+        for (const auto &vt : vtables) {
+            for (const auto& base : vt.base_classes) {
+                base_to_derived[base].push_back(vt.class_name);
+            }
+        }
+
+        // Populate derived_classes in single pass
+        for (auto &vt : vtables) {
+            auto it = base_to_derived.find(vt.class_name);
+            if (it != base_to_derived.end()) {
+                vt.derived_classes = it->second;
+                vt.derived_count = static_cast<int>(it->second.size());
+            }
+        }
+
+
         valid = true;
     }
 
@@ -32,30 +69,43 @@ struct vtable_cache_t {
 
 static vtable_cache_t g_vtable_cache;
 
+// Function browser - dockable window
 struct func_browser_t : public chooser_t {
 protected:
-    static constexpr uint32 flags_ = CH_MODAL | CH_KEEP;
+    static constexpr uint32 flags_ = CH_KEEP;  // No modal
     std::vector<smart_annotator::VTableEntry> entries;
     ea_t vtable_addr;
+    std::map<int, vtable_comparison::OverrideStatus> status_map;  // index -> status
+
+    // Mutable cache for formatted strings (prevents dangling pointers)
+    mutable char idx_cache[vtable_utils::INDEX_CACHE_SIZE];
+    mutable char entry_addr_cache[vtable_utils::ADDRESS_CACHE_SIZE];
+    mutable char func_addr_cache[vtable_utils::FUNCTION_NAME_CACHE_SIZE];
 
 public:
     static constexpr int widths_[] = { 8, 20, 20, 14 };
     static constexpr const char *const header_[] = {
-        "Index",
-        "Entry Address",
-        "Function",
-        "Status"
+        "Index", "Entry Address", "Function", "Status"
     };
 
     qstring title_storage;
 
     func_browser_t(const std::string& cls_name, ea_t vt_addr,
-                   const std::vector<smart_annotator::VTableEntry>& ents)
+                   const std::vector<smart_annotator::VTableEntry>& ents,
+                   const vtable_comparison::VTableComparison* comp = nullptr)
         : chooser_t(flags_, qnumber(widths_), widths_, header_, "Functions"),
           entries(ents), vtable_addr(vt_addr)
     {
         title_storage.sprnt("Functions: %s", cls_name.c_str());
         title = title_storage.c_str();
+        popup_names[POPUP_INS] = "Jump to Function";
+
+        // Build status map from comparison if available
+        if (comp) {
+            for (const auto& entry : comp->entries) {
+                status_map[entry.index] = entry.status;
+            }
+        }
     }
 
     virtual size_t idaapi get_count() const override {
@@ -63,62 +113,240 @@ public:
     }
 
     virtual void idaapi get_row(
-        qstrvec_t *cols,
-        int *,
-        chooser_item_attrs_t *attrs,
-        size_t n) const override
+        qstrvec_t *cols, int *, chooser_item_attrs_t *attrs, size_t n) const override
     {
-        if (cols == nullptr || n >= entries.size())
-            return;
+        if (cols == nullptr || n >= entries.size()) return;
 
         const auto &entry = entries[n];
 
-        char idx_buf[16];
-        qsnprintf(idx_buf, sizeof(idx_buf), "%d", entry.index);
-        cols->at(0) = idx_buf;
+        // Use mutable cache members to prevent dangling pointers
+        vtable_utils::format_index(idx_cache, sizeof(idx_cache), entry.index);
+        cols->at(0) = idx_cache;
 
-        char entry_buf[32];
-        qsnprintf(entry_buf, sizeof(entry_buf), "0x%llX", (unsigned long long)entry.entry_addr);
-        cols->at(1) = entry_buf;
+        vtable_utils::format_address(entry_addr_cache, sizeof(entry_addr_cache), entry.entry_addr);
+        cols->at(1) = entry_addr_cache;
 
-        qstring func_name;
-        if (get_name(&func_name, entry.func_ptr) && func_name.length() > 0) {
-            cols->at(2) = func_name.c_str();
-        } else {
-            char func_buf[32];
-            qsnprintf(func_buf, sizeof(func_buf), "0x%llX", (unsigned long long)entry.func_ptr);
-            cols->at(2) = func_buf;
-        }
+        vtable_utils::format_function(func_addr_cache, sizeof(func_addr_cache), entry.func_ptr);
+        cols->at(2) = func_addr_cache;
 
-        if (entry.is_pure_virtual) {
+        // Show status based on comparison or pure virtual flag
+        auto status_it = status_map.find(entry.index);
+        if (status_it != status_map.end()) {
+            cols->at(3) = vtable_comparison::get_status_string(status_it->second);
+            if (attrs) {
+                attrs->color = vtable_comparison::get_status_text_color(status_it->second);
+            }
+        } else if (entry.is_pure_virtual) {
             cols->at(3) = "pure virtual";
-            if (attrs)
-                attrs->color = 0x8080FF;
+            if (attrs) {
+                attrs->color = vtable_utils::CLASS_PURE_VIRTUAL;
+            }
         } else {
             cols->at(3) = "";
         }
     }
 
     virtual cbret_t idaapi enter(size_t n) override {
-        if (n >= entries.size())
-            return cbret_t(0);
-
+        if (n >= entries.size()) return cbret_t(0);
         jumpto(entries[n].func_ptr);
-        return cbret_t(n);
+        return cbret_t(0);  // Don't change selection, just jump
+    }
+
+    virtual cbret_t idaapi ins(ssize_t n) override {
+        // Jump to Function
+        size_t idx = (n < 0) ? 0 : n;
+        if (idx >= entries.size()) return cbret_t(0);
+        jumpto(entries[idx].func_ptr);
+        return cbret_t(0);  // Don't change selection, just jump
+    }
+
+    virtual const void *idaapi get_obj_id(size_t *len) const override {
+        *len = sizeof(vtable_addr);
+        return &vtable_addr;
     }
 };
 
+// Comparison browser - dockable window
+struct comparison_browser_t : public chooser_t {
+protected:
+    static constexpr uint32 flags_ = CH_KEEP | CH_CAN_REFRESH;  // No modal
+    vtable_comparison::VTableComparison comparison;
+    bool show_inherited;
+
+    // Mutable cache for formatted strings (prevents dangling pointers)
+    mutable char idx_cache[vtable_utils::INDEX_CACHE_SIZE];
+    mutable char base_addr_cache[vtable_utils::ADDRESS_CACHE_SIZE];
+    mutable char base_func_cache[vtable_utils::FUNCTION_NAME_CACHE_SIZE];
+    mutable char derived_addr_cache[vtable_utils::ADDRESS_CACHE_SIZE];
+    mutable char derived_func_cache[vtable_utils::FUNCTION_NAME_CACHE_SIZE];
+
+    // Filtered index cache for O(1) lookup (prevents O(n²) UI rendering)
+    mutable std::vector<size_t> filtered_indices;
+    mutable bool cache_valid = false;
+
+public:
+    static constexpr int widths_[] = { 6, 18, 22, 18, 22, 14 };
+    static constexpr const char *const header_[] = {
+        "Index", "Base Function", "Base Address",
+        "Derived Function", "Derived Address", "Status"
+    };
+
+    qstring title_storage;
+
+    comparison_browser_t(const vtable_comparison::VTableComparison& comp, bool show_all = false)
+        : chooser_t(flags_, qnumber(widths_), widths_, header_, "VTable Comparison"),
+          comparison(comp), show_inherited(show_all)
+    {
+        title_storage.sprnt("Compare: %s → %s",
+                           comp.derived_class.c_str(),
+                           comp.base_class.c_str());
+        title = title_storage.c_str();
+        popup_names[POPUP_INS] = "Jump to Derived Function";
+        popup_names[POPUP_DEL] = "Jump to Base Function";
+        popup_names[POPUP_REFRESH] = show_inherited ? "Hide Inherited" : "Show All";
+        rebuild_filtered_cache();  // Build cache on construction
+    }
+
+private:
+    // Rebuild filtered index cache (O(n) operation)
+    void rebuild_filtered_cache() const {
+        filtered_indices.clear();
+        filtered_indices.reserve(comparison.entries.size());
+
+        for (size_t i = 0; i < comparison.entries.size(); ++i) {
+            if (show_inherited || comparison.entries[i].status != vtable_comparison::OverrideStatus::INHERITED) {
+                filtered_indices.push_back(i);
+            }
+        }
+        cache_valid = true;
+    }
+
+public:
+    virtual size_t idaapi get_count() const override {
+        if (!cache_valid) rebuild_filtered_cache();
+        return filtered_indices.size();
+    }
+
+    virtual void idaapi get_row(
+        qstrvec_t *cols, int *, chooser_item_attrs_t *attrs, size_t n) const override
+    {
+        if (cols == nullptr) return;
+        if (!cache_valid) rebuild_filtered_cache();
+        if (n >= filtered_indices.size()) {
+            return;
+        }
+
+        size_t entry_idx = filtered_indices[n];
+        const auto& entry = comparison.entries[entry_idx];
+
+        // Use mutable cache members to prevent dangling pointers
+        vtable_utils::format_index(idx_cache, sizeof(idx_cache), entry.index);
+        cols->at(0) = idx_cache;
+
+        if (!entry.base_func_name.empty()) {
+            qsnprintf(base_func_cache, sizeof(base_func_cache), "%s", entry.base_func_name.c_str());
+            cols->at(1) = base_func_cache;
+        } else if (entry.base_func_ptr != BADADDR) {
+            vtable_utils::format_sub_address(base_func_cache, sizeof(base_func_cache), entry.base_func_ptr);
+            cols->at(1) = base_func_cache;
+        } else {
+            cols->at(1) = "-";
+        }
+
+        if (entry.base_func_ptr != BADADDR) {
+            vtable_utils::format_address(base_addr_cache, sizeof(base_addr_cache), entry.base_func_ptr);
+            cols->at(2) = base_addr_cache;
+        } else {
+            cols->at(2) = "-";
+        }
+
+        if (!entry.derived_func_name.empty()) {
+            qsnprintf(derived_func_cache, sizeof(derived_func_cache), "%s", entry.derived_func_name.c_str());
+            cols->at(3) = derived_func_cache;
+        } else {
+            vtable_utils::format_sub_address(derived_func_cache, sizeof(derived_func_cache), entry.derived_func_ptr);
+            cols->at(3) = derived_func_cache;
+        }
+
+        vtable_utils::format_address(derived_addr_cache, sizeof(derived_addr_cache), entry.derived_func_ptr);
+        cols->at(4) = derived_addr_cache;
+
+        cols->at(5) = vtable_comparison::get_status_string(entry.status);
+
+        if (attrs) {
+            attrs->color = vtable_comparison::get_status_text_color(entry.status);
+        }
+    }
+
+    virtual cbret_t idaapi enter(size_t n) override {
+        if (!cache_valid) rebuild_filtered_cache();
+        if (n >= filtered_indices.size()) return cbret_t(0);
+
+        const auto& entry = comparison.entries[filtered_indices[n]];
+
+        if (entry.derived_func_ptr != BADADDR) {
+            jumpto(entry.derived_func_ptr);
+        }
+
+        return cbret_t(0);  // Don't change selection, just jump
+    }
+
+    virtual cbret_t idaapi ins(ssize_t n) override {
+        // Jump to Derived Function
+        if (n < 0 || !cache_valid) rebuild_filtered_cache();
+        size_t idx = (n < 0) ? 0 : n;
+        if (idx >= filtered_indices.size()) return cbret_t(0);
+
+        const auto& entry = comparison.entries[filtered_indices[idx]];
+
+        if (entry.derived_func_ptr != BADADDR) {
+            jumpto(entry.derived_func_ptr);
+        }
+
+        return cbret_t(n);
+    }
+
+    virtual cbret_t idaapi del(ssize_t n) {
+        // Jump to Base Function
+        if (n < 0 || !cache_valid) rebuild_filtered_cache();
+        size_t idx = (n < 0) ? 0 : n;
+        if (idx >= filtered_indices.size()) return cbret_t(0);
+
+        const auto& entry = comparison.entries[filtered_indices[idx]];
+
+        if (entry.base_func_ptr != BADADDR) {
+            jumpto(entry.base_func_ptr);
+        }
+
+        return cbret_t(n);
+    }
+
+    virtual cbret_t idaapi refresh(ssize_t) override {
+        show_inherited = !show_inherited;
+        popup_names[POPUP_REFRESH] = show_inherited ? "Hide Inherited" : "Show All";
+        cache_valid = false;  // Invalidate cache on filter change
+        return cbret_t(ALL_CHANGED);
+    }
+
+    virtual const void *idaapi get_obj_id(size_t *len) const override {
+        static const char id[] = "VTableComparison";
+        *len = sizeof(id);
+        return id;
+    }
+};
+
+// Main vtable chooser - dockable window
 struct vtable_chooser_t : public chooser_t {
 protected:
     static constexpr uint32 flags_ = CH_KEEP | CH_CAN_INS | CH_CAN_DEL | CH_CAN_REFRESH;
+    mutable size_t last_selection = 0;
+    mutable char base_display_cache[vtable_utils::BASE_CLASSES_DISPLAY_SIZE];
 
 public:
-    static constexpr int widths_[] = { 55, 18, 10, 14 };
+    static constexpr int widths_[] = { 30, 25, 18, 10, 12 };
     static constexpr const char *const header_[] = {
-        "Class Name",
-        "Address",
-        "Functions",
-        "Type"
+        "Class Name", "Base Classes", "Address",
+        "Functions", "Status"
     };
 
     vtable_chooser_t() : chooser_t(flags_, qnumber(widths_), widths_, header_, "VTable Explorer") {
@@ -140,27 +368,35 @@ public:
     }
 
     virtual void idaapi get_row(
-        qstrvec_t *cols,
-        int *,
-        chooser_item_attrs_t *attrs,
-        size_t n) const override
+        qstrvec_t *cols, int *, chooser_item_attrs_t *attrs, size_t n) const override
     {
-        if (cols == nullptr || n >= g_vtable_cache.vtables.size())
-            return;
+        if (cols == nullptr || n >= g_vtable_cache.vtables.size()) return;
 
         const VTableInfo &vt = g_vtable_cache.vtables[n];
 
-        std::string name_display = vt.class_name;
-        if (vt.pure_virtual_count > 0) {
-            name_display += " [abstract]";
-            if (attrs)
-                attrs->color = 0xFFB080;
+        cols->at(0) = vt.class_name.c_str();
+
+        base_display_cache[0] = '\0';
+        if (!vt.base_classes.empty()) {
+            char* p = base_display_cache;
+            char* end = base_display_cache + sizeof(base_display_cache);
+            for (size_t i = 0; i < vt.base_classes.size() && p < end - 1; ++i) {
+                if (i > 0 && p < end - 3) {
+                    *p++ = ',';
+                    *p++ = ' ';
+                }
+                const char* base_name = vt.base_classes[i].c_str();
+                while (*base_name && p < end - 1) {
+                    *p++ = *base_name++;
+                }
+            }
+            *p = '\0';
         }
-        cols->at(0) = name_display.c_str();
+        cols->at(1) = base_display_cache;
 
         char addr_buf[32];
         qsnprintf(addr_buf, sizeof(addr_buf), "0x%llX", (unsigned long long)vt.address);
-        cols->at(1) = addr_buf;
+        cols->at(2) = addr_buf;
 
         char count_buf[16];
         if (vt.pure_virtual_count > 0) {
@@ -168,35 +404,46 @@ public:
         } else {
             qsnprintf(count_buf, sizeof(count_buf), "%d", vt.func_count);
         }
-        cols->at(2) = count_buf;
-        cols->at(3) = vt.is_windows ? "Windows/MSVC" : "Linux/GCC";
+        cols->at(3) = count_buf;
+
+        const char* status = "";
+        if (vt.pure_virtual_count > 0) {
+            status = "Abstract";
+        } else if (!vt.base_classes.empty()) {
+            status = "Has Base";
+        } else {
+            status = "Root";
+        }
+        cols->at(4) = status;
+
+        if (vt.pure_virtual_count > 0) {
+            if (attrs) attrs->color = vtable_utils::CLASS_MULTIPLE_INHERIT;
+        } else if (!vt.base_classes.empty()) {
+            if (attrs) attrs->color = vtable_utils::CLASS_VIRTUAL_INHERIT;
+        }
     }
 
     virtual cbret_t idaapi enter(size_t n) override {
-        if (n >= g_vtable_cache.vtables.size())
-            return cbret_t(0);
+        if (n >= g_vtable_cache.vtables.size()) return cbret_t(0);
 
+        last_selection = n;  // Track selection
         const VTableInfo &vt = g_vtable_cache.vtables[n];
-        int count = smart_annotator::annotate_vtable(vt.address, vt.is_windows, g_vtable_cache.sorted_addrs, vt.class_name);
+        int count = smart_annotator::annotate_vtable(vt.address, vt.is_windows, g_vtable_cache.sorted_addrs);
 
         jumpto(vt.address);
 
         info("VTable Annotation Complete\n\n"
-             "Class: %s\n"
-             "Address: 0x%llX\n"
-             "Functions annotated: %d%s",
-             vt.class_name.c_str(),
-             (unsigned long long)vt.address,
-             count,
-             vt.pure_virtual_count > 0 ? "\n(Abstract class - has pure virtual functions)" : "");
+             "Class: %s\nAddress: 0x%llX\nFunctions annotated: %d%s",
+             vt.class_name.c_str(), (unsigned long long)vt.address, count,
+             vt.pure_virtual_count > 0 ? "\n(Abstract class)" : "");
 
         return cbret_t(n);
     }
 
     virtual cbret_t idaapi del(size_t n) override {
-        if (n >= g_vtable_cache.vtables.size())
-            return cbret_t(0);
+        if (n >= g_vtable_cache.vtables.size()) return cbret_t(0);
 
+        last_selection = n;  // Track selection
         const VTableInfo &vt = g_vtable_cache.vtables[n];
         auto entries = smart_annotator::get_vtable_entries(vt.address, vt.is_windows, g_vtable_cache.sorted_addrs);
 
@@ -205,15 +452,33 @@ public:
             return cbret_t(n);
         }
 
-        func_browser_t browser(vt.class_name, vt.address, entries);
-        browser.choose();
+        // Try to get comparison data with base class for status display
+        vtable_comparison::VTableComparison* comp_ptr = nullptr;
+        vtable_comparison::VTableComparison comp_data;
+
+        if (!vt.base_classes.empty()) {
+            ea_t base_vtable = vtable_comparison::find_vtable_by_class_name(
+                vt.base_classes[0], g_vtable_cache.vtables);
+
+            if (base_vtable != BADADDR) {
+                comp_data = vtable_comparison::compare_vtables(
+                    vt.address, base_vtable, vt.is_windows,
+                    g_vtable_cache.sorted_addrs,
+                    vt.class_name, vt.base_classes[0]
+                );
+                comp_ptr = &comp_data;
+            }
+        }
+
+        // Create dockable function browser (heap-allocated for CH_KEEP, IDA manages lifetime)
+        func_browser_t *browser = new func_browser_t(vt.class_name, vt.address, entries, comp_ptr);
+        browser->choose();
 
         return cbret_t(n);
     }
 
     virtual cbret_t idaapi ins(ssize_t) override {
-        if (g_vtable_cache.vtables.empty())
-            return cbret_t(0);
+        if (g_vtable_cache.vtables.empty()) return cbret_t(0);
 
         show_wait_box("Annotating all vtables...");
 
@@ -221,25 +486,20 @@ public:
         int total_vtables = 0;
 
         for (const auto &vt : g_vtable_cache.vtables) {
-            int count = smart_annotator::annotate_vtable(vt.address, vt.is_windows, g_vtable_cache.sorted_addrs, vt.class_name);
+            int count = smart_annotator::annotate_vtable(vt.address, vt.is_windows, g_vtable_cache.sorted_addrs);
             total_funcs += count;
             total_vtables++;
 
             if (user_cancelled()) {
                 hide_wait_box();
-                info("Annotation cancelled.\n\n"
-                     "VTables annotated: %d / %d\n"
-                     "Functions annotated: %d",
+                info("Annotation cancelled.\n\nVTables annotated: %d / %d\nFunctions annotated: %d",
                      total_vtables, (int)g_vtable_cache.vtables.size(), total_funcs);
                 return cbret_t(0);
             }
         }
 
         hide_wait_box();
-
-        info("All VTables Annotated!\n\n"
-             "VTables processed: %d\n"
-             "Total functions annotated: %d",
+        info("All VTables Annotated!\n\nVTables processed: %d\nTotal functions annotated: %d",
              total_vtables, total_funcs);
 
         return cbret_t(0);
@@ -258,6 +518,118 @@ public:
         return id;
     }
 
+    // Helper methods for external actions
+    size_t get_current_selection() const { return last_selection; }
+
+    void show_tree_for_selection(size_t n) {
+        if (n >= g_vtable_cache.vtables.size()) {
+            warning("Invalid selection: %zu", n);
+            return;
+        }
+        const VTableInfo& vt = g_vtable_cache.vtables[n];
+        inheritance_graph::show_inheritance_graph(
+            vt.class_name, vt.address, vt.is_windows, &g_vtable_cache.vtables
+        );
+    }
+
+    void show_tree_for_current() {
+        if (last_selection >= g_vtable_cache.vtables.size()) {
+            warning("No vtable selected");
+            return;
+        }
+        const VTableInfo& vt = g_vtable_cache.vtables[last_selection];
+        inheritance_graph::show_inheritance_graph(
+            vt.class_name, vt.address, vt.is_windows, &g_vtable_cache.vtables
+        );
+    }
+
+private:
+    // Helper: Select base class from multiple inheritance options
+    bool select_base_class(const std::vector<std::string>& base_classes,
+                          std::string& selected_base) const {
+        if (base_classes.size() == 1) {
+            selected_base = base_classes[0];
+            return true;
+        }
+
+        qstring selection_text = "Select base class:\n\n";
+        for (size_t i = 0; i < base_classes.size(); ++i) {
+            selection_text.cat_sprnt("%d. %s\n", (int)i, base_classes[i].c_str());
+        }
+        selection_text.cat_sprnt("\nEnter number (0-%d): ", (int)(base_classes.size() - 1));
+
+        qstring choice_str;
+        if (!ask_str(&choice_str, HIST_IDENT, "%s", selection_text.c_str())) {
+            return false;
+        }
+
+        int base_selection = atoi(choice_str.c_str());
+
+        if (base_selection < 0 || base_selection >= (int)base_classes.size()) {
+            warning("Invalid choice: %d. Must be between 0 and %d",
+                   base_selection, (int)(base_classes.size() - 1));
+            return false;
+        }
+
+        selected_base = base_classes[base_selection];
+        return true;
+    }
+
+    // Unified comparison logic for any vtable index
+    void show_comparison_for_vtable_index(size_t n) {
+        if (n >= g_vtable_cache.vtables.size()) {
+            warning("Invalid selection");
+            return;
+        }
+
+        const VTableInfo& vt = g_vtable_cache.vtables[n];
+
+        if (vt.base_classes.empty()) {
+            warning("No base classes found for %s\n\n"
+                   "This class either:\n"
+                   "- Has no inheritance\n"
+                   "- Was compiled without RTTI\n"
+                   "- Has stripped RTTI information",
+                   vt.class_name.c_str());
+            return;
+        }
+
+        std::string selected_base;
+        if (!select_base_class(vt.base_classes, selected_base)) {
+            return;  // User cancelled or invalid selection
+        }
+
+        ea_t base_vtable = vtable_comparison::find_vtable_by_class_name(
+            selected_base, g_vtable_cache.vtables);
+
+        if (base_vtable == BADADDR) {
+            warning("Could not find vtable for base class: %s", selected_base.c_str());
+            return;
+        }
+
+        auto comp = vtable_comparison::compare_vtables(
+            vt.address, base_vtable, vt.is_windows,
+            g_vtable_cache.sorted_addrs,
+            vt.class_name, selected_base
+        );
+
+        if (comp.entries.empty()) {
+            warning("No vtable entries found for comparison");
+            return;
+        }
+
+        comparison_browser_t *browser = new comparison_browser_t(comp, false);
+        browser->choose();
+    }
+
+public:
+    void show_compare_for_selection(size_t n) {
+        show_comparison_for_vtable_index(n);
+    }
+
+    void show_compare_for_current() {
+        show_comparison_for_vtable_index(last_selection);
+    }
 };
 
 static vtable_chooser_t* g_chooser = nullptr;
@@ -275,4 +647,88 @@ inline void close_vtable_chooser() {
         g_chooser = nullptr;
     }
     g_vtable_cache.invalidate();
+}
+
+// Show inheritance graph for selected vtable
+inline void show_inheritance_tree_action(action_activation_ctx_t* ctx) {
+    if (!g_chooser) {
+        warning("VTable Explorer not open.\nPlease open it first with Cmd/Ctrl+Shift+V");
+        return;
+    }
+
+    // Get selection from context instead of tracked variable
+    if (ctx && !ctx->chooser_selection.empty()) {
+        size_t selected_row = ctx->chooser_selection[0];
+        g_chooser->show_tree_for_selection(selected_row);
+    } else {
+        g_chooser->show_tree_for_current();
+    }
+}
+
+// Show comparison with base class for selected vtable
+inline void show_compare_base_action(action_activation_ctx_t* ctx) {
+    if (!g_chooser) {
+        warning("VTable Explorer not open.\nPlease open it first with Cmd/Ctrl+Shift+V");
+        return;
+    }
+
+    // Get selection from context instead of tracked variable
+    if (ctx && !ctx->chooser_selection.empty()) {
+        size_t selected_row = ctx->chooser_selection[0];
+        g_chooser->show_compare_for_selection(selected_row);
+    } else {
+        g_chooser->show_compare_for_current();
+    }
+}
+
+// Jump to function in function browser
+inline void funcbrowser_jump_action(action_activation_ctx_t* ctx) {
+    if (!ctx || !ctx->widget) return;
+
+    qstring title;
+    get_widget_title(&title, ctx->widget);
+
+    func_browser_t* browser = (func_browser_t*)get_chooser_obj(title.c_str());
+    if (browser && !ctx->chooser_selection.empty()) {
+        browser->ins(ctx->chooser_selection[0]);
+    }
+}
+
+// Jump to derived function in comparison browser
+inline void compbrowser_jump_derived_action(action_activation_ctx_t* ctx) {
+    if (!ctx || !ctx->widget) return;
+
+    qstring title;
+    get_widget_title(&title, ctx->widget);
+
+    comparison_browser_t* browser = (comparison_browser_t*)get_chooser_obj(title.c_str());
+    if (browser && !ctx->chooser_selection.empty()) {
+        browser->ins(ctx->chooser_selection[0]);
+    }
+}
+
+// Jump to base function in comparison browser
+inline void compbrowser_jump_base_action(action_activation_ctx_t* ctx) {
+    if (!ctx || !ctx->widget) return;
+
+    qstring title;
+    get_widget_title(&title, ctx->widget);
+
+    comparison_browser_t* browser = (comparison_browser_t*)get_chooser_obj(title.c_str());
+    if (browser && !ctx->chooser_selection.empty()) {
+        browser->del(ctx->chooser_selection[0]);
+    }
+}
+
+// Toggle inherited functions visibility in comparison browser
+inline void compbrowser_toggle_action(action_activation_ctx_t* ctx) {
+    if (!ctx || !ctx->widget) return;
+
+    qstring title;
+    get_widget_title(&title, ctx->widget);
+
+    comparison_browser_t* browser = (comparison_browser_t*)get_chooser_obj(title.c_str());
+    if (browser) {
+        browser->refresh(0);
+    }
 }

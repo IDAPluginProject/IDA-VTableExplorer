@@ -8,30 +8,31 @@
 #include <auto.hpp>
 #include <vector>
 #include <algorithm>
+#include "vtable_utils.h"
 
 namespace smart_annotator {
 
-inline int get_ptr_size() {
-    static int ptr_size = inf_is_64bit() ? 8 : 4;
-    return ptr_size;
-}
-
-inline ea_t read_ptr(ea_t addr) {
-    return get_ptr_size() == 8 ? get_qword(addr) : get_dword(addr);
-}
+using vtable_utils::get_ptr_size;
+using vtable_utils::read_ptr;
+using vtable_utils::OPCODE_PUSH_RBP;
+using vtable_utils::OPCODE_REX_W;
+using vtable_utils::OPCODE_REX;
+using vtable_utils::OPCODE_REX_B;
 
 inline int detect_vfunc_start_offset(ea_t vtable_addr, bool is_windows) {
+    using namespace vtable_utils;
+
     if (is_windows) return 0;
 
     const int ptr_size = get_ptr_size();
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < MAX_VFUNC_SEARCH_DEPTH; ++i) {
         ea_t entry_addr = vtable_addr + (i * ptr_size);
         if (!is_mapped(entry_addr)) continue;
 
         segment_t* seg = getseg(read_ptr(entry_addr));
         if (seg && (seg->perm & SEGPERM_EXEC)) return i;
     }
-    return 2;
+    return DEFAULT_VFUNC_START_OFFSET;
 }
 
 inline bool is_pure_virtual(ea_t func_ptr) {
@@ -71,7 +72,7 @@ inline bool is_valid_function_pointer(ea_t addr) {
     }
 
     uint8 b = get_byte(addr);
-    return b == 0x55 || b == 0x48 || b == 0x40 || b == 0x41;
+    return b == OPCODE_PUSH_RBP || b == OPCODE_REX_W || b == OPCODE_REX || b == OPCODE_REX_B;
 }
 
 inline ea_t find_next_vtable(ea_t current, const std::vector<ea_t>& sorted_addrs) {
@@ -98,20 +99,22 @@ inline VTableStats scan_vtable(
     const std::vector<ea_t>& sorted_vtables,
     std::vector<VTableEntry>* out_entries = nullptr)
 {
+    using namespace vtable_utils;
+
     VTableStats stats;
     const int ptr_size = get_ptr_size();
     const int start_offset = detect_vfunc_start_offset(vtable_addr, is_windows);
     const ea_t next_vtable = find_next_vtable(vtable_addr, sorted_vtables);
 
-    int max_check = 1024;
-    if (next_vtable != BADADDR)
+    int max_check = MAX_VTABLE_ENTRIES;
+    if (next_vtable != BADADDR && next_vtable > vtable_addr)
         max_check = std::min(max_check, (int)((next_vtable - vtable_addr) / ptr_size));
 
     int consecutive_invalid = 0;
     int vfunc_index = 0;
-    char cmt_buf[64];
+    char cmt_buf[COMMENT_BUFFER_SIZE];
 
-    for (int i = start_offset; i < max_check && consecutive_invalid < 5; ++i) {
+    for (int i = start_offset; i < max_check && consecutive_invalid < CONSECUTIVE_INVALID_THRESHOLD; ++i) {
         ea_t entry_addr = vtable_addr + (i * ptr_size);
         if (!is_mapped(entry_addr)) break;
 
@@ -165,13 +168,15 @@ inline VTableStats get_vtable_stats(ea_t addr, bool is_win, const std::vector<ea
 }
 
 inline std::vector<VTableEntry> get_vtable_entries(ea_t addr, bool is_win, const std::vector<ea_t>& vtables) {
+    using namespace vtable_utils;
+
     std::vector<VTableEntry> entries;
-    entries.reserve(64);
+    entries.reserve(ENTRY_RESERVE_SIZE);
     scan_vtable<true, false>(addr, is_win, vtables, &entries);
     return entries;
 }
 
-inline int annotate_vtable(ea_t addr, bool is_win, const std::vector<ea_t>& vtables, const std::string& = "") {
+inline int annotate_vtable(ea_t addr, bool is_win, const std::vector<ea_t>& vtables) {
     return scan_vtable<false, true>(addr, is_win, vtables).func_count;
 }
 
