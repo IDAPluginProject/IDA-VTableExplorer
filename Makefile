@@ -123,7 +123,7 @@ else
 	@printf "[+] Windows x64: release/vtable64-windows-x64.dll\n"
 endif
 
-build-all: build build-windows
+build-all: clean build build-windows
 	@printf "\n[*] ========================================\n"
 	@printf "[+] ALL PLATFORMS BUILT SUCCESSFULLY!\n"
 	@printf "\n"
