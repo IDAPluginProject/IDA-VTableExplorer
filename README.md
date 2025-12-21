@@ -104,7 +104,7 @@ auto OnTakeDamage = (TakeDamageFn)vtable[42];  // exact index from annotation
 ## Screenshots
 
 <p align="center">
-  <img src="docs/images/vtable-chooser.jpg" alt="VTable Chooser" width="700"/>
+  <img src="docs/images/vtable-chooser.png" alt="VTable Chooser" width="700"/>
   <br/>
   <em>Searchable vtable browser with inheritance and pure virtual detection</em>
 </p>
@@ -122,7 +122,7 @@ auto OnTakeDamage = (TakeDamageFn)vtable[42];  // exact index from annotation
 </p>
 
 <p align="center">
-  <img src="docs/images/inheritance-graph.jpg" alt="Inheritance Graph" width="700"/>
+  <img src="docs/images/inheritance-graph.png" alt="Inheritance Graph" width="700"/>
   <br/>
   <em>Interactive class hierarchy visualization with override statistics</em>
 </p>
