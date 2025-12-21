@@ -681,6 +681,75 @@ public:
     void show_compare_for_current() {
         show_comparison_for_vtable_index(last_selection);
     }
+
+    void browse_functions_for_selection(size_t n) {
+        if (n >= g_vtable_cache.vtables.size()) return;
+
+        last_selection = n;
+        const VTableInfo &vt = g_vtable_cache.vtables[n];
+
+        ea_t browse_addr = vt.is_intermediate ? vt.parent_vtable_addr : vt.address;
+        if (browse_addr == BADADDR) {
+            warning("No vtable address available for %s", vt.class_name.c_str());
+            return;
+        }
+
+        auto entries = smart_annotator::get_vtable_entries(browse_addr, vt.is_windows, g_vtable_cache.sorted_addrs);
+        if (entries.empty()) {
+            warning("No functions found in vtable");
+            return;
+        }
+
+        vtable_comparison::VTableComparison* comp_ptr = nullptr;
+        vtable_comparison::VTableComparison comp_data;
+
+        std::string base_for_comp = vt.is_intermediate ? vt.parent_class :
+                                    (!vt.base_classes.empty() ? vt.base_classes[0] : "");
+        if (!base_for_comp.empty()) {
+            ea_t base_vtable = vtable_comparison::find_vtable_by_class_name(base_for_comp, g_vtable_cache.vtables);
+            if (base_vtable != BADADDR) {
+                comp_data = vtable_comparison::compare_vtables(
+                    browse_addr, base_vtable, vt.is_windows,
+                    g_vtable_cache.sorted_addrs, vt.class_name, base_for_comp);
+                comp_ptr = &comp_data;
+            }
+        }
+
+        func_browser_t *browser = new func_browser_t(vt.class_name, browse_addr, entries, comp_ptr);
+        browser->choose();
+    }
+
+    void browse_functions_for_current() {
+        browse_functions_for_selection(last_selection);
+    }
+
+    void annotate_all_vtables() {
+        if (g_vtable_cache.vtables.empty()) return;
+
+        show_wait_box("Annotating all vtables...");
+
+        int total_funcs = 0;
+        int total_vtables = 0;
+
+        for (const auto &vt : g_vtable_cache.vtables) {
+            if (vt.is_intermediate) continue;
+
+            int count = smart_annotator::annotate_vtable(vt.address, vt.is_windows, g_vtable_cache.sorted_addrs);
+            total_funcs += count;
+            total_vtables++;
+
+            if (user_cancelled()) {
+                hide_wait_box();
+                info("Annotation cancelled.\n\nVTables annotated: %d / %d\nFunctions annotated: %d",
+                     total_vtables, (int)g_vtable_cache.vtables.size(), total_funcs);
+                return;
+            }
+        }
+
+        hide_wait_box();
+        info("All VTables Annotated!\n\nVTables processed: %d\nTotal functions annotated: %d",
+             total_vtables, total_funcs);
+    }
 };
 
 static vtable_chooser_t* g_chooser = nullptr;
@@ -772,4 +841,25 @@ inline void compbrowser_toggle_action(action_activation_ctx_t* ctx) {
     if (browser) {
         browser->refresh(0);
     }
+}
+
+inline void browse_functions_action(action_activation_ctx_t* ctx) {
+    if (!g_chooser) {
+        warning("VTable Explorer not open.\nPlease open it first with Cmd/Ctrl+Shift+V");
+        return;
+    }
+
+    if (ctx && !ctx->chooser_selection.empty()) {
+        g_chooser->browse_functions_for_selection(ctx->chooser_selection[0]);
+    } else {
+        g_chooser->browse_functions_for_current();
+    }
+}
+
+inline void annotate_all_action(action_activation_ctx_t* ctx) {
+    if (!g_chooser) {
+        warning("VTable Explorer not open.\nPlease open it first with Cmd/Ctrl+Shift+V");
+        return;
+    }
+    g_chooser->annotate_all_vtables();
 }

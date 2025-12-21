@@ -81,6 +81,28 @@ struct compbrowser_toggle_action_t : public action_handler_t {
     }
 };
 
+struct browse_functions_action_t : public action_handler_t {
+    virtual int idaapi activate(action_activation_ctx_t* ctx) override {
+        browse_functions_action(ctx);
+        return 1;
+    }
+
+    virtual action_state_t idaapi update(action_update_ctx_t*) override {
+        return AST_ENABLE_ALWAYS;
+    }
+};
+
+struct annotate_all_action_t : public action_handler_t {
+    virtual int idaapi activate(action_activation_ctx_t* ctx) override {
+        annotate_all_action(ctx);
+        return 1;
+    }
+
+    virtual action_state_t idaapi update(action_update_ctx_t*) override {
+        return AST_ENABLE_ALWAYS;
+    }
+};
+
 static vtable_explorer_action_t ah_explorer;
 static vtable_tree_action_t ah_tree;
 static vtable_compare_action_t ah_compare;
@@ -88,6 +110,8 @@ static funcbrowser_jump_action_t ah_funcjump;
 static compbrowser_jump_derived_action_t ah_compjump_derived;
 static compbrowser_jump_base_action_t ah_compjump_base;
 static compbrowser_toggle_action_t ah_comptoggle;
+static browse_functions_action_t ah_browse_funcs;
+static annotate_all_action_t ah_annotate_all;
 
 struct ui_event_listener_t : public event_listener_t {
     virtual ssize_t idaapi on_event(ssize_t code, va_list va) override {
@@ -104,8 +128,11 @@ struct ui_event_listener_t : public event_listener_t {
                 get_widget_title(&title, widget);
                 if (title == "VTable Explorer") {
                     attach_action_to_popup(widget, popup, "-", nullptr, SETMENU_APP);
+                    attach_action_to_popup(widget, popup, "vtable:browse_funcs", nullptr, SETMENU_APP);
                     attach_action_to_popup(widget, popup, "vtable:tree", nullptr, SETMENU_APP);
                     attach_action_to_popup(widget, popup, "vtable:compare", nullptr, SETMENU_APP);
+                    attach_action_to_popup(widget, popup, "-", nullptr, SETMENU_APP);
+                    attach_action_to_popup(widget, popup, "vtable:annotate_all", nullptr, SETMENU_APP);
                 }
                 else if (title.find("Functions:") == 0) {
                     attach_action_to_popup(widget, popup, "-", nullptr, SETMENU_APP);
@@ -134,6 +161,8 @@ struct vtable_plugin_ctx_t : public plugmod_t {
         unregister_action("vtable:explorer");
         unregister_action("vtable:tree");
         unregister_action("vtable:compare");
+        unregister_action("vtable:browse_funcs");
+        unregister_action("vtable:annotate_all");
         unregister_action("funcbrowser:jump");
         unregister_action("compbrowser:jump_derived");
         unregister_action("compbrowser:jump_base");
@@ -218,9 +247,29 @@ plugmod_t* idaapi init() {
         -1
     );
 
+    action_desc_t desc_browse_funcs = ACTION_DESC_LITERAL(
+        "vtable:browse_funcs",
+        "Browse Functions",
+        &ah_browse_funcs,
+        nullptr,
+        "Browse virtual functions in selected vtable",
+        -1
+    );
+
+    action_desc_t desc_annotate_all = ACTION_DESC_LITERAL(
+        "vtable:annotate_all",
+        "Annotate All VTables",
+        &ah_annotate_all,
+        nullptr,
+        "Annotate all vtables with function indices",
+        -1
+    );
+
     register_action(desc_explorer);
     register_action(desc_tree);
     register_action(desc_compare);
+    register_action(desc_browse_funcs);
+    register_action(desc_annotate_all);
     register_action(desc_funcjump);
     register_action(desc_compjump_derived);
     register_action(desc_compjump_base);
