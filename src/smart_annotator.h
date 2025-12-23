@@ -95,7 +95,8 @@ inline VTableStats scan_vtable(
     ea_t vtable_addr,
     bool is_windows,
     const std::vector<ea_t>& sorted_vtables,
-    std::vector<VTableEntry>* out_entries = nullptr)
+    std::vector<VTableEntry>* out_entries = nullptr,
+    const std::map<int, int>* status_map = nullptr)
 {
     using namespace vtable_utils;
 
@@ -151,7 +152,25 @@ inline VTableStats scan_vtable(
                 add_func(func_ptr);
 
             int byte_offset = vfunc_index * ptr_size;
-            qsnprintf(cmt_buf, sizeof(cmt_buf), "index: %d | offset: %d", vfunc_index, byte_offset);
+            const char* prefix = "";
+
+            // Determine prefix based on status (fixed width: 13 chars including space)
+            if (status_map) {
+                auto it = status_map->find(vfunc_index);
+                if (it != status_map->end()) {
+                    switch (it->second) {
+                        case 0: prefix = "[Inherited]  "; break;  // INHERITED (11 + 2 spaces)
+                        case 1: prefix = "[Override]   "; break;  // OVERRIDDEN (10 + 3 spaces)
+                        case 2: prefix = "[NEW]        "; break;  // NEW_VIRTUAL (5 + 8 spaces)
+                        case 3: prefix = "[Pure→Impl]  "; break;  // PURE_TO_IMPL (11 + 2 spaces)
+                        case 4: prefix = "[Impl→Pure]  "; break;  // IMPL_TO_PURE (11 + 2 spaces)
+                    }
+                }
+            } else if (pure_virt) {
+                prefix = "[PURE]       ";  // 6 + 7 spaces
+            }
+
+            qsnprintf(cmt_buf, sizeof(cmt_buf), "%sindex: %-3d | offset: %-4d", prefix, vfunc_index, byte_offset);
             set_cmt(entry_addr, cmt_buf, false);
         }
 
@@ -174,8 +193,8 @@ inline std::vector<VTableEntry> get_vtable_entries(ea_t addr, bool is_win, const
     return entries;
 }
 
-inline int annotate_vtable(ea_t addr, bool is_win, const std::vector<ea_t>& vtables) {
-    return scan_vtable<false, true>(addr, is_win, vtables).func_count;
+inline int annotate_vtable(ea_t addr, bool is_win, const std::vector<ea_t>& vtables, const std::map<int, int>* status_map = nullptr) {
+    return scan_vtable<false, true>(addr, is_win, vtables, nullptr, status_map).func_count;
 }
 
 } // namespace smart_annotator

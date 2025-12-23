@@ -500,7 +500,35 @@ public:
             return cbret_t(n);
         }
 
-        int count = smart_annotator::annotate_vtable(vt.address, vt.is_windows, g_vtable_cache.sorted_addrs);
+        // Get base class for comparison (same logic as annotate_all_vtables)
+        std::map<int, int> status_map;
+        std::string base_for_comp = !vt.base_classes.empty() ? vt.base_classes[0] : "";
+        if (!base_for_comp.empty()) {
+            ea_t base_vtable = vtable_comparison::find_vtable_by_class_name(base_for_comp, g_vtable_cache.vtables);
+            if (base_vtable != BADADDR) {
+                auto comp = vtable_comparison::compare_vtables(
+                    vt.address, base_vtable, vt.is_windows,
+                    g_vtable_cache.sorted_addrs, vt.class_name, base_for_comp);
+
+                for (const auto& entry : comp.entries) {
+                    status_map[entry.index] = static_cast<int>(entry.status);
+                }
+            }
+        }
+
+        // Add vtable header comment with parent class info
+        char vtable_cmt[256];
+        if (!base_for_comp.empty()) {
+            qsnprintf(vtable_cmt, sizeof(vtable_cmt), "vtable for '%s' : inherits '%s'",
+                     vt.class_name.c_str(), base_for_comp.c_str());
+        } else {
+            qsnprintf(vtable_cmt, sizeof(vtable_cmt), "vtable for '%s' : (root class)",
+                     vt.class_name.c_str());
+        }
+        set_cmt(vt.address, vtable_cmt, false);
+
+        int count = smart_annotator::annotate_vtable(vt.address, vt.is_windows, g_vtable_cache.sorted_addrs,
+                                                     status_map.empty() ? nullptr : &status_map);
         jumpto(vt.address);
 
         info("VTable Annotation Complete\n\n"
@@ -734,7 +762,36 @@ public:
         for (const auto &vt : g_vtable_cache.vtables) {
             if (vt.is_intermediate) continue;
 
-            int count = smart_annotator::annotate_vtable(vt.address, vt.is_windows, g_vtable_cache.sorted_addrs);
+            // Get base class for comparison (same logic as function browser)
+            std::map<int, int> status_map;
+            std::string base_for_comp = !vt.base_classes.empty() ? vt.base_classes[0] : "";
+            if (!base_for_comp.empty()) {
+                ea_t base_vtable = vtable_comparison::find_vtable_by_class_name(base_for_comp, g_vtable_cache.vtables);
+                if (base_vtable != BADADDR) {
+                    auto comp = vtable_comparison::compare_vtables(
+                        vt.address, base_vtable, vt.is_windows,
+                        g_vtable_cache.sorted_addrs, vt.class_name, base_for_comp);
+
+                    // Build status map from comparison entries
+                    for (const auto& entry : comp.entries) {
+                        status_map[entry.index] = static_cast<int>(entry.status);
+                    }
+                }
+            }
+
+            // Add vtable header comment with parent class info
+            char vtable_cmt[256];
+            if (!base_for_comp.empty()) {
+                qsnprintf(vtable_cmt, sizeof(vtable_cmt), "vtable for '%s' : inherits '%s'",
+                         vt.class_name.c_str(), base_for_comp.c_str());
+            } else {
+                qsnprintf(vtable_cmt, sizeof(vtable_cmt), "vtable for '%s' : (root class)",
+                         vt.class_name.c_str());
+            }
+            set_cmt(vt.address, vtable_cmt, false);
+
+            int count = smart_annotator::annotate_vtable(vt.address, vt.is_windows, g_vtable_cache.sorted_addrs,
+                                                         status_map.empty() ? nullptr : &status_map);
             total_funcs += count;
             total_vtables++;
 

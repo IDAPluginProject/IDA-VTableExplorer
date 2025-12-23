@@ -4,26 +4,50 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.2.2] - 2025-12-23
+
+### Added
+
+-  **VTable Header Comments**: Vtable annotations now include header comment showing parent class inheritance
+   -  Format: `vtable for 'ClassName' : inherits 'ParentClass'`
+   -  Root classes show: `vtable for 'ClassName' : (root class)`
+-  **Override Status Annotations**: Function entries now display inheritance status
+   -  `[Override]` - Function overrides parent implementation
+   -  `[Inherited]` - Function inherited unchanged from parent
+   -  `[NEW]` - New virtual function not in parent
+   -  `[Pure→Impl]` - Pure virtual function now implemented
+   -  `[Impl→Pure]` - Implementation changed to pure virtual
+   -  `[PURE]` - Pure virtual function (for classes without parent)
+
+### Improved
+
+-  **Fixed-Width Annotation Formatting**: All annotation comments now align perfectly
+   -  Status prefixes padded to 13 characters for consistent alignment
+   -  Index and offset values left-aligned with trailing spaces
+   -  Format: `[Status]     index: N   | offset: M   `
+
+---
+
 ## [1.2.1] - 2025-12-21
 
 ### Added
 
-- **RTTI Auto-Detection**: Automatic MSVC vs GCC/Itanium format detection based on file type and symbol mangling
-- **Intermediate Class Support**: Detect and display compiler-inlined classes that exist in RTTI chain but have no vtable symbol
-- **Inheritance Graph Enhancement**: Intermediate classes shown with proper parent-child connections and "uses [ParentVTable]" info
-- **MSVC x64 Pointer Format Detection**: Auto-detect 64-bit absolute pointers vs 32-bit RVA format in Complete Object Locator
+-  **RTTI Auto-Detection**: Automatic MSVC vs GCC/Itanium format detection based on file type and symbol mangling
+-  **Intermediate Class Support**: Detect and display compiler-inlined classes that exist in RTTI chain but have no vtable symbol
+-  **Inheritance Graph Enhancement**: Intermediate classes shown with proper parent-child connections and "uses [ParentVTable]" info
+-  **MSVC x64 Pointer Format Detection**: Auto-detect 64-bit absolute pointers vs 32-bit RVA format in Complete Object Locator
 
 ### Fixed
 
-- **Nested Class Name Normalization**: MSVC nested classes now properly display as `Outer::Inner` instead of `Outer@Inner`
-- **Graph Edge Logic**: Fixed intermediate class connections - parent→intermediate→child chain displays correctly
-- **Class Name Validation**: Relaxed validation to support more edge cases
+-  **Nested Class Name Normalization**: MSVC nested classes now properly display as `Outer::Inner` instead of `Outer@Inner`
+-  **Graph Edge Logic**: Fixed intermediate class connections - parent→intermediate→child chain displays correctly
+-  **Class Name Validation**: Relaxed validation to support more edge cases
 
 ### Improved
 
-- **Code Cleanup**: Compact comments, renamed functions, removed redundant code
-- **Chooser Simplification**: Removed unused Insert/Delete options from VTable list
-- **Buffer Sizes**: Increased limits for longer class names and RTTI strings
+-  **Code Cleanup**: Compact comments, renamed functions, removed redundant code
+-  **Chooser Simplification**: Removed unused Insert/Delete options from VTable list
+-  **Buffer Sizes**: Increased limits for longer class names and RTTI strings
 
 ---
 
