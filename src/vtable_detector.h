@@ -7,11 +7,13 @@
 #include <segment.hpp>
 #include <funcs.hpp>
 #include <bytes.hpp>
+#include <xref.hpp>
 #include <vector>
 #include <string>
 #include <map>
 #include <algorithm>
 #include "vtable_utils.h"
+#include "rtti_parser.h"
 
 struct VTableInfo {
     ea_t address;
@@ -197,6 +199,79 @@ inline std::vector<VTableInfo> find_vtables() {
             if (is_valid_class_name(class_name))
                 add_vtable(ea, class_name, is_windows);
         }
+    }
+
+    // Second pass: discover vtables from ??_R4 (RTTI Complete Object Locator)
+    // symbols that have no corresponding ??_7 vtable symbol
+    for (size_t i = 0; i < name_count; ++i) {
+        const char* name = get_nlist_name(i);
+        if (!name || strncmp(name, "??_R4", 5) != 0) continue;
+
+        ea_t col_ea = get_nlist_ea(i);
+        if (!rtti_detector::validate_msvc_col(col_ea)) continue;
+
+        // Read TypeDescriptor address from COL (+12 = type_descriptor RVA)
+        const int ps = get_ptr_size();
+        const bool x64 = (ps == 8);
+        int32 td_rva = get_dword(col_ea + 12);
+
+        ea_t td;
+        if (x64) {
+            ea_t base = get_imagebase();
+            if (base == BADADDR) continue;
+            td = rtti_parser::msvc_rtti::rva_to_va(base, td_rva);
+        } else {
+            td = (ea_t)(uint32)td_rva;
+        }
+        if (td == BADADDR || !is_mapped(td)) continue;
+
+        std::string class_name = rtti_parser::msvc_rtti::read_msvc_type_name(td);
+        if (!is_valid_class_name(class_name)) continue;
+        if (seen.count(class_name)) continue;
+
+        // Locate vtable from COL
+        ea_t vtable_addr = BADADDR;
+
+        // Strategy C: construct matching ??_7 name from ??_R4 name
+        {
+            std::string vt_sym = "??_7" + std::string(name + 5);
+            ea_t ea = get_name_ea(BADADDR, vt_sym.c_str());
+            if (ea != BADADDR)
+                vtable_addr = ea;
+        }
+
+        // Strategy A: find data xrefs to the COL address
+        if (vtable_addr == BADADDR) {
+            xrefblk_t xb;
+            for (bool ok = xb.first_to(col_ea, XREF_DATA); ok; ok = xb.next_to()) {
+                // COL pointer sits at vtable - ptr_size, so vtable = xref + ptr_size
+                ea_t candidate = xb.from + ps;
+                ea_t first_entry = read_ptr(candidate);
+                if (first_entry == BADADDR || !is_mapped(first_entry)) continue;
+
+                if (get_func(first_entry)) {
+                    vtable_addr = candidate;
+                    break;
+                }
+                segment_t* seg = getseg(first_entry);
+                if (seg && (seg->perm & SEGPERM_EXEC)) {
+                    vtable_addr = candidate;
+                    break;
+                }
+            }
+        }
+
+        if (vtable_addr == BADADDR) continue;
+
+        // Validate: first vtable entry must point to executable code
+        ea_t first_func = read_ptr(vtable_addr);
+        if (first_func == BADADDR || !is_mapped(first_func)) continue;
+        if (!get_func(first_func)) {
+            segment_t* seg = getseg(first_func);
+            if (!seg || !(seg->perm & SEGPERM_EXEC)) continue;
+        }
+
+        add_vtable(vtable_addr, class_name, true);
     }
 
     std::sort(vtables.begin(), vtables.end(),
